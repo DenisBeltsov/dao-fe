@@ -8,6 +8,7 @@ import {
 } from 'wagmi'
 import './App.css'
 import { HOODI_SCAN, hoodi, hoodiChainId } from './config/customNetworks'
+import BalanceDisplay from './components/BalanceDisplay'
 
 const shortenAddress = (address?: string | null) => {
   if (!address) {
@@ -185,6 +186,7 @@ function App() {
             )}
           </div>
         )}
+        <BalanceDisplay />
       </section>
     </main>
   )
