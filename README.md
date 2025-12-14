@@ -1,86 +1,27 @@
-# DApp (Vite + React)
+# DAO Frontend
 
-## What is Vite?
+Simple Vite + React client for the DAO lab tasks. It connects to the Hoodi test network via wagmi, handles Web3 auth (nonce signing) against the backend, and shows wallet/token balances once authenticated.
 
-Vite is a modern frontend build tool that provides a fast and optimized development experience. It uses native ES modules in the browser for development and bundles the code using Rollup for production. Vite is known for its lightning-fast startup time and efficient hot module replacement (HMR), making it ideal for modern web development.
+## Getting Started
 
-## Why are we using Vite?
+1. Install deps: `npm install`.
+2. Copy `.env.example` to `.env` and fill:
+   - `VITE_PROJECT_ID` – Reown project id.
+   - `VITE_ALCHEMY_KEY` – Hoodi RPC key.
+   - `VITE_API_URL` – backend URL for auth (e.g. `http://localhost:3000`).
+   - optional `VITE_CUSTOM_TOKEN_ADDRESS`.
+3. Run `npm run dev` for local development.
 
-We are using Vite in this project because:
+## Available Scripts
 
-1. **Fast Development**: Vite's instant server start and HMR ensure a smooth and efficient development workflow.
-2. **Optimized Build**: Vite produces highly optimized production builds using Rollup.
-3. **Modern Features**: It supports modern JavaScript and TypeScript out of the box, making it easy to work with cutting-edge tools and frameworks.
-4. **Simplicity**: Vite's configuration is straightforward, reducing the complexity of setting up a development environment.
+- `npm run dev` – Vite dev server with HMR.
+- `npm run build` – type-check + production build.
+- `npm run preview` – serve the built app.
+- `npm run lint` – run ESLint over the repo.
 
-## Usage
+## Features
 
-1. Go to [Reown Cloud](https://cloud.reown.com) and create a new project.
-2. Copy your `Project ID`
-3. Rename `.env.example` to `.env` and paste your `Project ID` as the value for `VITE_PROJECT_ID`
-4. Run `pnpm install` to install dependencies
-5. Run `pnpm run dev` to start the development server
-
-## Resources
-
-- [Reown — Docs](https://docs.reown.com)
-- [Vite — GitHub](https://github.com/vitejs/vite)
-- [Vite — Docs](https://vitejs.dev/guide/)
-
----
-
-## 🔧 Git Workflow & Contribution Rules
-
-### 📂 Branch Naming Convention
-
-Branches must follow these formats:
-
-- `feature/TT-1-add-login-page` — for new features
-- `bugfix/TT-1-fix-login-bug` — for bug fixes
-
-> `TT-1` = task/ticket ID from your board (e.g. Jira, Linear)
-
-### ✅ Pull Request Naming
-
-Follow this PR title structure:
-
-- `Feature/TT-1: Add login page`
-- `Bugfix/TT-2: Fix auth bug`
-
-### ✅ Pull Request Process
-
-- PRs must target the `dev` branch
-- Include a link to the related task in the description
-- Change the task status to **"Review In Progress"**
-- At least **2 reviewers**: one Tech Lead + one Developer
-- Merge only after all CI checks pass
-
-### ✅ Commit Message Format (Conventional Commits)
-
-We use the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) standard:
-
-
-#### Valid `<type>` values:
-
-- `feat` – new feature
-- `fix` – bug fix
-- `docs` – documentation
-- `style` – formatting only
-- `refactor` – code restructure
-- `test` – testing only
-- `chore` – tooling, build, infra
-
-#### Examples:
-
-```sh
-feat: add new login page
-fix(auth): fix login validation error
-docs: update API section in README
-style: format code with Prettier
-```
-
-### ✅ Commit Linting
-Commits are automatically checked using commitlint and husky. Invalid messages will be rejected.
-
-### ✅ Branch Name Linting
-A GitHub Action checks PR branch names match the required format (feature/TT-1-something, etc). Invalid names will fail CI.
+- Wallet connect/disconnect + network switching.
+- Dapp auth: fetch nonce, sign with wallet, verify via backend (axios).
+- Balance panel for native + user-added ERC-20 tokens (persisted in `localStorage`).
+- Guarded layout to hide dapp content until auth succeeds and reset on disconnect.

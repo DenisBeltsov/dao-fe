@@ -1,7 +1,7 @@
-import {useEffect, useMemo, useState} from 'react'
-import {type Address, getAddress, isAddress} from 'viem'
-import {useAccount, useBalance} from 'wagmi'
-import {customTokenAddress} from '../config/tokenConfig'
+import { useEffect, useMemo, useState } from 'react'
+import { type Address, getAddress, isAddress } from 'viem'
+import { useAccount, useBalance } from 'wagmi'
+import { customTokenAddress } from '../config/tokenConfig'
 
 const LOCAL_STORAGE_KEY = 'dao-fe.customTokens'
 
@@ -24,15 +24,8 @@ type TokenRowProps = {
   onRemove?: (token: Address) => void
 }
 
-const TokenBalanceRow = ({
-                           token,
-                           enabled,
-                           address,
-                           chainId,
-                           removable,
-                           onRemove
-                         }: TokenRowProps) => {
-  const {data, isPending, status} = useBalance({
+const TokenBalanceRow = ({ token, enabled, address, chainId, removable, onRemove }: TokenRowProps) => {
+  const { data, isPending } = useBalance({
     address,
     chainId,
     token,
@@ -40,30 +33,30 @@ const TokenBalanceRow = ({
       enabled,
       refetchOnMount: true,
       refetchOnWindowFocus: false,
+      refetchInterval: enabled ? 15_000 : false,
     },
-    watch: enabled,
   })
 
   return (
-      <div className="token-row">
-        <div className="token-row__meta">
-          <p className="label">Token</p>
-          <p className="monospace">{token}</p>
-        </div>
-        <div>
-          <p className="label">Balance</p>
-          {enabled ? (
-              renderBalance(data?.formatted, data?.symbol, isPending || status === 'pending')
-          ) : (
-              <span className="value muted">Connect wallet to view</span>
-          )}
-        </div>
-        {removable && (
-            <button className="remove-token-btn" type="button" onClick={() => onRemove?.(token)}>
-              Remove
-            </button>
+    <div className="token-row">
+      <div className="token-row__meta">
+        <p className="label">Token</p>
+        <p className="monospace">{token}</p>
+      </div>
+      <div>
+        <p className="label">Balance</p>
+        {enabled ? (
+          renderBalance(data?.formatted, data?.symbol, isPending)
+        ) : (
+          <span className="value muted">Connect wallet to view</span>
         )}
       </div>
+      {removable && (
+        <button className="remove-token-btn" type="button" onClick={() => onRemove?.(token)}>
+          Remove
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -84,7 +77,7 @@ const readStoredTokens = (): Address[] => {
 }
 
 export const BalanceDisplay = () => {
-  const {address, chainId, isConnected} = useAccount()
+  const { address, chainId, isConnected } = useAccount()
   const enabled = Boolean(address && chainId && isConnected)
   const [inputValue, setInputValue] = useState('')
   const [inputError, setInputError] = useState<string | null>(null)
@@ -102,19 +95,15 @@ export const BalanceDisplay = () => {
     return Array.from(new Set(tokens))
   }, [storedTokens])
 
-  const {
-    data: nativeBalance,
-    isPending: isNativePending,
-    status: nativeStatus,
-  } = useBalance({
+  const { data: nativeBalance, isPending: isNativePending } = useBalance({
     address,
     chainId,
     query: {
       enabled,
       refetchOnMount: true,
       refetchOnWindowFocus: false,
+      refetchInterval: enabled ? 15_000 : false,
     },
-    watch: enabled,
   })
 
   const handleAddToken = () => {
@@ -146,52 +135,50 @@ export const BalanceDisplay = () => {
   }
 
   return (
-      <section className="balance-card">
-        <div>
-          <p className="label">Native token</p>
-          {enabled ? (
-              renderBalance(nativeBalance?.formatted, nativeBalance?.symbol, isNativePending || nativeStatus === 'pending')
-          ) : (
-              <span className="value muted">Connect wallet to view native balance.</span>
-          )}
-        </div>
+    <section className="balance-card">
+      <div>
+        <p className="label">Native token</p>
+        {enabled ? (
+          renderBalance(nativeBalance?.formatted, nativeBalance?.symbol, isNativePending)
+        ) : (
+          <span className="value muted">Connect wallet to view native balance.</span>
+        )}
+      </div>
 
-        <div className="token-input-row">
-          <div className="token-input-row__fields">
-            <label htmlFor="tokenAddress" className="label">
-              Custom token address
-            </label>
-            <input
-                id="tokenAddress"
-                className="token-input"
-                placeholder="0x..."
-                value={inputValue}
-                onChange={(event) => setInputValue(event.target.value)}
-            />
-          </div>
-          <button type="button" className="primary-btn secondary add-token-btn"
-                  onClick={handleAddToken}>
-            Add token
-          </button>
+      <div className="token-input-row">
+        <div className="token-input-row__fields">
+          <label htmlFor="tokenAddress" className="label">
+            Custom token address
+          </label>
+          <input
+            id="tokenAddress"
+            className="token-input"
+            placeholder="0x..."
+            value={inputValue}
+            onChange={(event) => setInputValue(event.target.value)}
+          />
         </div>
-        {inputError && <p className="error-text">{inputError}</p>}
+        <button type="button" className="primary-btn secondary add-token-btn" onClick={handleAddToken}>
+          Add token
+        </button>
+      </div>
+      {inputError && <p className="error-text">{inputError}</p>}
 
-        <div className="token-list">
-          {allTokens.length === 0 &&
-              <p className="helper-text">Add ERC-20 addresses to monitor their balances.</p>}
-          {allTokens.map((token) => (
-              <TokenBalanceRow
-                  key={token}
-                  token={token}
-                  enabled={Boolean(enabled && token)}
-                  address={address}
-                  chainId={chainId}
-                  removable={!customTokenAddress || token !== customTokenAddress}
-                  onRemove={handleRemoveToken}
-              />
-          ))}
-        </div>
-      </section>
+      <div className="token-list">
+        {allTokens.length === 0 && <p className="helper-text">Add ERC-20 addresses to monitor their balances.</p>}
+        {allTokens.map((token) => (
+          <TokenBalanceRow
+            key={token}
+            token={token}
+            enabled={Boolean(enabled && token)}
+            address={address}
+            chainId={chainId}
+            removable={!customTokenAddress || token !== customTokenAddress}
+            onRemove={handleRemoveToken}
+          />
+        ))}
+      </div>
+    </section>
   )
 }
 
