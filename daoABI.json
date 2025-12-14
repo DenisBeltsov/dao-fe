@@ -71,6 +71,57 @@
     },
     {
       "type": "function",
+      "name": "getProposal",
+      "inputs": [
+        {
+          "name": "_id",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct DaoContract.Proposal",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "description",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "executed",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "forVotes",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "againstVotes",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "createdAt",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "governanceToken",
       "inputs": [],
       "outputs": [
