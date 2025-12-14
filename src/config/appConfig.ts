@@ -1,11 +1,11 @@
-// 0. Додати queryClient
+import { QueryClient } from '@tanstack/react-query'
 
-// 2. Додати generalConfig який буде використаний у createAppKit.
-// Ці налаштування будуть застосовані глобально до AppKit.
+export const queryClient = new QueryClient()
+
+// Настройки теми залишаються для можливого підключення AppKit у наступних тасках.
 export const generalConfig = {
-  // ...
   themeMode: 'light' as const,
   themeVariables: {
-	'--w3m-accent': '#000000',
-  }
+    '--w3m-accent': '#000000',
+  },
 }

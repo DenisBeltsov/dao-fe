@@ -1,19 +1,40 @@
+import { createConfig, createStorage, http, noopStorage } from 'wagmi'
+import { injected, walletConnect } from 'wagmi/connectors'
+import { Chain } from 'viem'
+import { hoodi, hoodiChainId, hoodiRpcUrl } from './customNetworks'
 
-// 0. Додаємо projectId
+const projectId = import.meta.env.VITE_PROJECT_ID
 
-// 1. додаємо помилку якщо !projectId
-
-// 2. metadata - щоб гаманцю було зрозуміло, хто ти та що саме просиш.
-// metadata в AppKit/Web3Modal — це паспорт твого dApp, який летить у гаманець під час конекту
-// через WalletConnect/адаптери.
-export const metadata = {
-  name: 'AppKit',
-  description: 'Example',
-  url: 'https://reown.com', // origin must match your domain & subdomain
-  icons: ['https://avatars.githubusercontent.com/u/179229932']
+if (!projectId) {
+  throw new Error('VITE_PROJECT_ID is not defined')
 }
 
-// 3. Прописуємо Networks які будемо використовувати
+export const metadata = {
+  name: 'DAO FE Lab',
+  description: 'Minimal Hoodi wallet connector',
+  url: 'https://dao.fe.local',
+  icons: ['https://avatars.githubusercontent.com/u/179229932'],
+}
 
+export const supportedChains: [Chain, ...Chain[]] = [hoodi]
 
-// 4. Створити WagmiAdapter і передати в нього projectId та networks
+export const wagmiConfig = createConfig({
+  chains: supportedChains,
+  transports: {
+    [hoodiChainId]: http(hoodiRpcUrl),
+  },
+  connectors: [
+    injected({ shimDisconnect: true }),
+    walletConnect({
+      projectId,
+      showQrModal: true,
+      metadata,
+    }),
+  ],
+  multiInjectedProviderDiscovery: true,
+  syncConnectedChain: true,
+  ssr: true,
+  storage: createStorage({
+    storage: noopStorage,
+  }),
+})
