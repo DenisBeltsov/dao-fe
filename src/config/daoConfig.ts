@@ -13,26 +13,5 @@ if (!isAddress(REQUIRED_DAO_ADDRESS)) {
 
 const baseAbi = (daoArtifact as { abi: Abi }).abi ?? []
 
-const voteFragment = {
-  type: 'function',
-  name: 'vote',
-  inputs: [
-    {
-      name: '_id',
-      type: 'uint256',
-      internalType: 'uint256',
-    },
-    {
-      name: '_support',
-      type: 'bool',
-      internalType: 'bool',
-    },
-  ],
-  outputs: [],
-  stateMutability: 'nonpayable',
-} as const
-
-const hasVoteFragment = baseAbi.some((item) => item.type === 'function' && item.name === 'vote')
-
-export const daoAbi = (hasVoteFragment ? baseAbi : [...baseAbi, voteFragment]) as Abi
+export const daoAbi = baseAbi as Abi
 export const daoAddress = REQUIRED_DAO_ADDRESS as Address
