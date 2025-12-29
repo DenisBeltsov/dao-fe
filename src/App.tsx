@@ -11,6 +11,9 @@ import { HOODI_SCAN, hoodi, hoodiChainId } from './config/customNetworks'
 import BalanceDisplay from './components/BalanceDisplay'
 import DAPPLayout from './components/DAPPLayout'
 import DaoGovernance from './components/DaoGovernance'
+import ProposalsSection from './components/proposals/ProposalsSection'
+import { RouterProvider } from './hooks/useRouter'
+import { TokenMetadataProvider } from './context/tokenMetadata'
 
 const shortenAddress = (address?: string | null) => {
   if (!address) {
@@ -110,7 +113,6 @@ function App() {
     <main className="app-shell">
       <section className="wallet-card">
         <header>
-          <p className="eyebrow">HW-15</p>
           <h1>Hoodi wallet connection</h1>
         </header>
 
@@ -144,58 +146,65 @@ function App() {
         )}
 
         <DAPPLayout>
-          {isConnected && (
-            <>
-              <div className="wallet-details">
-                <div className="wallet-details__header">
-                  <AddressAvatar address={address} />
-                  <div>
-                    <p className="label">Address</p>
-                    {address ? (
-                      <a
-                        href={`${HOODI_SCAN}address/${address}`}
-                        className="address-link"
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {shortenAddress(address)}
-                      </a>
-                    ) : (
-                      <span>-</span>
-                    )}
+          <TokenMetadataProvider>
+            <RouterProvider>
+              {isConnected && (
+                <>
+                  <div className="wallet-details">
+                  <div className="wallet-details__header">
+                    <AddressAvatar address={address} />
+                    <div>
+                      <p className="label">Address</p>
+                      {address ? (
+                        <a
+                          href={`${HOODI_SCAN}address/${address}`}
+                          className="address-link"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {shortenAddress(address)}
+                        </a>
+                      ) : (
+                        <span>-</span>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="wallet-grid">
-                  <div>
-                    <p className="label">Network</p>
-                    <p className="value">{networkLabel}</p>
+                  <div className="wallet-grid">
+                    <div>
+                      <p className="label">Network</p>
+                      <p className="value">{networkLabel}</p>
+                    </div>
+                    <div>
+                      <p className="label">Chain ID</p>
+                      <p className="value">{chainId ?? '-'}</p>
+                    </div>
+                    <div>
+                      <p className="label">Balance</p>
+                      <p className="value">
+                        {isBalancePending
+                          ? 'Loading…'
+                          : `${balanceData?.formatted ?? '0'} ${balanceData?.symbol ?? 'ETH'}`}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="label">Chain ID</p>
-                    <p className="value">{chainId ?? '-'}</p>
-                  </div>
-                  <div>
-                    <p className="label">Balance</p>
-                    <p className="value">
-                      {isBalancePending
-                        ? 'Loading…'
-                        : `${balanceData?.formatted ?? '0'} ${balanceData?.symbol ?? 'ETH'}`}
+
+                  {isWrongNetwork && (
+                    <p className="warning-text">
+                      Wrong network detected. Please switch to Hoodi (chainId {hoodiChainId}).
                     </p>
-                  </div>
+                  )}
                 </div>
 
-                {isWrongNetwork && (
-                  <p className="warning-text">
-                    Wrong network detected. Please switch to Hoodi (chainId {hoodiChainId}).
-                  </p>
-                )}
-              </div>
-
-              <BalanceDisplay />
-              <DaoGovernance />
-            </>
-          )}
+                <BalanceDisplay />
+                <div id="dao-governance">
+                  <DaoGovernance />
+                </div>
+                </>
+              )}
+              <ProposalsSection />
+            </RouterProvider>
+          </TokenMetadataProvider>
         </DAPPLayout>
       </section>
     </main>
