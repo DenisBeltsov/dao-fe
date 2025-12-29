@@ -115,7 +115,7 @@ function App() {
         <div>
           <p className="eyebrow">Hoodi DAO</p>
           <h1>Governance control center</h1>
-          <p className="subtitle">Monitor the treasury, proposals, and execute votes from a single console.</p>
+          <p className="subtitle">Monitor proposals, and execute votes from a single console.</p>
         </div>
         <div className="wallet-toolbar">
           <div className="toolbar-status">
