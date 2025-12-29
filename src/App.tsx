@@ -9,6 +9,8 @@ import {
 import './App.css'
 import { HOODI_SCAN, hoodi, hoodiChainId } from './config/customNetworks'
 import BalanceDisplay from './components/BalanceDisplay'
+import DAPPLayout from './components/DAPPLayout'
+import DaoGovernance from './components/DaoGovernance'
 
 const shortenAddress = (address?: string | null) => {
   if (!address) {
@@ -141,52 +143,60 @@ function App() {
           <p className="helper-text">No wallet extension detected. Install MetaMask to continue.</p>
         )}
 
-        {isConnected && (
-          <div className="wallet-details">
-            <div className="wallet-details__header">
-              <AddressAvatar address={address} />
-              <div>
-                <p className="label">Address</p>
-                {address ? (
-                  <a
-                    href={`${HOODI_SCAN}address/${address}`}
-                    className="address-link"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {shortenAddress(address)}
-                  </a>
-                ) : (
-                  <span>-</span>
+        <DAPPLayout>
+          {isConnected && (
+            <>
+              <div className="wallet-details">
+                <div className="wallet-details__header">
+                  <AddressAvatar address={address} />
+                  <div>
+                    <p className="label">Address</p>
+                    {address ? (
+                      <a
+                        href={`${HOODI_SCAN}address/${address}`}
+                        className="address-link"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {shortenAddress(address)}
+                      </a>
+                    ) : (
+                      <span>-</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="wallet-grid">
+                  <div>
+                    <p className="label">Network</p>
+                    <p className="value">{networkLabel}</p>
+                  </div>
+                  <div>
+                    <p className="label">Chain ID</p>
+                    <p className="value">{chainId ?? '-'}</p>
+                  </div>
+                  <div>
+                    <p className="label">Balance</p>
+                    <p className="value">
+                      {isBalancePending
+                        ? 'Loading…'
+                        : `${balanceData?.formatted ?? '0'} ${balanceData?.symbol ?? 'ETH'}`}
+                    </p>
+                  </div>
+                </div>
+
+                {isWrongNetwork && (
+                  <p className="warning-text">
+                    Wrong network detected. Please switch to Hoodi (chainId {hoodiChainId}).
+                  </p>
                 )}
               </div>
-            </div>
 
-            <div className="wallet-grid">
-              <div>
-                <p className="label">Network</p>
-                <p className="value">{networkLabel}</p>
-              </div>
-              <div>
-                <p className="label">Chain ID</p>
-                <p className="value">{chainId ?? '-'}</p>
-              </div>
-              <div>
-                <p className="label">Balance</p>
-                <p className="value">
-                  {isBalancePending ? 'Loading…' : `${balanceData?.formatted ?? '0'} ${balanceData?.symbol ?? 'ETH'}`}
-                </p>
-              </div>
-            </div>
-
-            {isWrongNetwork && (
-              <p className="warning-text">
-                Wrong network detected. Please switch to Hoodi (chainId {hoodiChainId}).
-              </p>
-            )}
-          </div>
-        )}
-        <BalanceDisplay />
+              <BalanceDisplay />
+              <DaoGovernance />
+            </>
+          )}
+        </DAPPLayout>
       </section>
     </main>
   )
