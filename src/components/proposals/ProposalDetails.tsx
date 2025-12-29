@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Chart as ChartJS, ArcElement, DoughnutController, Legend, Tooltip } from 'chart.js'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import type { Address } from 'viem'
@@ -30,10 +30,17 @@ export const ProposalDetails = ({ proposalId }: Props) => {
   const { address, isConnected, chainId } = useAccount()
   const publicClient = usePublicClient()
   const { writeContractAsync, isPending: isVotePending } = useWriteContract()
+  const queryClient = useQueryClient()
   const [voteStatus, setVoteStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
   const [voteError, setVoteError] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState<boolean | null>(null)
   const [isCheckingVote, setIsCheckingVote] = useState(false)
+  const [daoOwner, setDaoOwner] = useState<Address | null>(null)
+  const [isOwnerLoading, setIsOwnerLoading] = useState(true)
+  const [canExecute, setCanExecute] = useState<boolean | null>(null)
+  const [isCheckingExecution, setIsCheckingExecution] = useState(false)
+  const [executeStatus, setExecuteStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
+  const [executeError, setExecuteError] = useState<string | null>(null)
   const chartRef = useRef<HTMLCanvasElement | null>(null)
   const chartInstanceRef = useRef<ChartJS<'doughnut'> | null>(null)
 
@@ -71,6 +78,7 @@ export const ProposalDetails = ({ proposalId }: Props) => {
   const voteWindowClosed = voteWindowEnd ? Date.now() > voteWindowEnd : false
   const votingActive = votingOpen && !voteWindowClosed
   const isWrongNetwork = Boolean(isConnected && chainId && chainId !== hoodiChainId)
+  const isOwnerWallet = daoOwner && address ? daoOwner.toLowerCase() === address.toLowerCase() : false
   const voteChartData = useMemo(() => {
     if (proposal?.votesFor === undefined || proposal?.votesAgainst === undefined) {
       return null
@@ -79,6 +87,73 @@ export const ProposalDetails = ({ proposalId }: Props) => {
     const againstVotes = Number(proposal.votesAgainst ?? 0)
     return [Number.isFinite(forVotes) ? forVotes : 0, Number.isFinite(againstVotes) ? againstVotes : 0]
   }, [proposal?.votesFor, proposal?.votesAgainst])
+
+  useEffect(() => {
+    if (!publicClient) {
+      setIsOwnerLoading(false)
+      return
+    }
+    let cancelled = false
+    const loadOwner = async () => {
+      setIsOwnerLoading(true)
+      try {
+        const owner = await publicClient.readContract({
+          address: daoAddress,
+          abi: daoAbi,
+          functionName: 'owner',
+        })
+        if (!cancelled) {
+          setDaoOwner(owner as Address)
+        }
+      } catch (ownerError) {
+        console.warn('Failed to load DAO owner', ownerError)
+      } finally {
+        if (!cancelled) {
+          setIsOwnerLoading(false)
+        }
+      }
+    }
+    loadOwner()
+    return () => {
+      cancelled = true
+    }
+  }, [publicClient])
+
+  useEffect(() => {
+    if (!publicClient || !Number.isFinite(numericId) || !voteWindowClosed || proposal?.executed) {
+      setCanExecute(null)
+      setIsCheckingExecution(false)
+      return
+    }
+    let cancelled = false
+    const checkExecution = async () => {
+      setIsCheckingExecution(true)
+      try {
+        const result = await publicClient.readContract({
+          address: daoAddress,
+          abi: daoAbi,
+          functionName: 'hasQuorum',
+          args: [BigInt(numericId)],
+        })
+        if (!cancelled) {
+          setCanExecute(Boolean(result))
+        }
+      } catch (quorumError) {
+        console.warn('Failed to validate execution eligibility', quorumError)
+        if (!cancelled) {
+          setCanExecute(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setIsCheckingExecution(false)
+        }
+      }
+    }
+    checkExecution()
+    return () => {
+      cancelled = true
+    }
+  }, [publicClient, numericId, voteWindowClosed, proposal?.executed])
 
   useEffect(() => {
     if (!publicClient || !isConnected || !address || !Number.isFinite(numericId)) {
@@ -210,6 +285,54 @@ export const ProposalDetails = ({ proposalId }: Props) => {
     } catch (error) {
       setVoteStatus('error')
       setVoteError(getErrorMessage(error))
+    }
+  }
+
+  const handleExecute = async () => {
+    if (!proposal) {
+      return
+    }
+    if (!isConnected || !address) {
+      setExecuteStatus('error')
+      setExecuteError('Connect your wallet to execute proposals')
+      return
+    }
+    if (isWrongNetwork) {
+      setExecuteStatus('error')
+      setExecuteError('Switch to the Hoodi network to execute')
+      return
+    }
+    if (!isOwnerWallet) {
+      setExecuteStatus('error')
+      setExecuteError('Only the DAO owner can execute proposals')
+      return
+    }
+    if (!voteWindowClosed) {
+      setExecuteStatus('error')
+      setExecuteError('Voting window is still open')
+      return
+    }
+    if (!canExecute) {
+      setExecuteStatus('error')
+      setExecuteError('Execution requirements not met')
+      return
+    }
+    setExecuteStatus('pending')
+    setExecuteError(null)
+    try {
+      await writeContractAsync({
+        account: address,
+        address: daoAddress,
+        abi: daoAbi,
+        functionName: 'executeProposal',
+        args: [BigInt(numericId)],
+      })
+      setExecuteStatus('success')
+      await queryClient.invalidateQueries({ queryKey: ['proposal', numericId] })
+      await queryClient.invalidateQueries({ queryKey: ['proposal-results', numericId] })
+    } catch (error) {
+      setExecuteStatus('error')
+      setExecuteError(getErrorMessage(error))
     }
   }
 
@@ -346,6 +469,41 @@ export const ProposalDetails = ({ proposalId }: Props) => {
         </div>
       ) : (
         <p className="success-text">Voting completed for this proposal.</p>
+      )}
+
+      {!proposal.executed && voteWindowClosed && (
+        <div className="proposal-actions execution-dialog">
+          <h4>Execute proposal</h4>
+          <p className="helper-text">
+            Voting closed on {voteWindowEnd ? new Date(voteWindowEnd).toLocaleString() : 'the scheduled deadline'}.
+          </p>
+          {isOwnerLoading && <p className="helper-text">Checking DAO ownership permissions...</p>}
+          {isCheckingExecution && <p className="helper-text">Validating quorum and eligibility...</p>}
+          {!isCheckingExecution && canExecute === false && (
+            <p className="warning-text">Quorum requirements were not met. This proposal cannot be executed.</p>
+          )}
+          {canExecute && (
+            isOwnerWallet ? (
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={executeStatus === 'pending' || isWrongNetwork}
+                onClick={handleExecute}
+              >
+                {executeStatus === 'pending' ? 'Executing...' : 'Execute proposal'}
+              </button>
+            ) : (
+              <p className="helper-text">
+                Only the DAO owner {daoOwner ? <span className="monospace">{daoOwner}</span> : ''} can execute proposals.
+              </p>
+            )
+          )}
+          {!canExecute && !isCheckingExecution && (
+            <p className="helper-text">Execution becomes available once quorum is met.</p>
+          )}
+          {executeStatus === 'success' && <p className="success-text">Execution transaction sent.</p>}
+          {executeStatus === 'error' && executeError && <p className="error-text">{executeError}</p>}
+        </div>
       )}
     </div>
   )

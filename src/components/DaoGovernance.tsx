@@ -36,10 +36,6 @@ export const DaoGovernance = () => {
   const [ownerAddress, setOwnerAddress] = useState<Address | null>(null)
   const [isOwnerLoading, setIsOwnerLoading] = useState(true)
 
-  const [executeProposalId, setExecuteProposalId] = useState('')
-  const [executeStatus, setExecuteStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
-  const [executeError, setExecuteError] = useState<string | null>(null)
-
   useEffect(() => {
     if (!daoReadContract) {
       setIsOwnerLoading(false)
@@ -124,33 +120,6 @@ export const DaoGovernance = () => {
     }
   }
 
-  const handleExecute = async () => {
-    const numericId = Number(executeProposalId)
-    if (!Number.isFinite(numericId)) {
-      setExecuteError('Enter a valid proposal id')
-      return
-    }
-    if (!isConnected || !address) {
-      setExecuteError('Connect your wallet to execute proposals')
-      return
-    }
-    setExecuteStatus('pending')
-    setExecuteError(null)
-    try {
-      await writeContractAsync({
-        account: address,
-        address: daoAddress,
-        abi: daoAbi,
-        functionName: 'executeProposal',
-        args: [BigInt(numericId)],
-      })
-      setExecuteStatus('success')
-    } catch (error) {
-      setExecuteStatus('error')
-      setExecuteError(getErrorMessage(error))
-    }
-  }
-
   const isOwner = ownerAddress && address ? ownerAddress.toLowerCase() === address.toLowerCase() : false
 
   return (
@@ -185,11 +154,7 @@ export const DaoGovernance = () => {
               disabled={!isConnected || isWritePending}
               required
             />
-            <button
-              className="primary-btn"
-              type="submit"
-              disabled={!isConnected || !description.trim() || isWritePending}
-            >
+            <button className="primary-btn full-width" type="submit" disabled={!isConnected || !description.trim() || isWritePending}>
               {isWritePending && createStatus === 'pending' ? 'Creating...' : 'Create proposal'}
             </button>
             {createStatus === 'pending' && <p className="helper-text">Waiting for confirmation...</p>}
@@ -198,7 +163,7 @@ export const DaoGovernance = () => {
           </form>
 
           <p className="helper-text">
-            Review proposal statuses in the section below. Enter the id here to execute on-chain.
+            Publish the proposal, then manage voting & execution from the detail view once quorum is met.
           </p>
         </>
       ) : (
@@ -213,28 +178,19 @@ export const DaoGovernance = () => {
         </div>
       )}
 
-      {isOwner && (
-        <div className="proposal-actions">
-          <h4>Execute proposal</h4>
-          <input
-            type="number"
-            min="0"
-            className="token-input"
-            value={executeProposalId}
-            onChange={(event) => setExecuteProposalId(event.target.value)}
-            placeholder="Proposal id"
-          />
-          <button type="button" className="primary-btn" disabled={!isConnected} onClick={handleExecute}>
-            {executeStatus === 'pending' ? 'Executing...' : 'Execute proposal'}
-          </button>
-          {executeStatus === 'success' && <p className="success-text">Execution transaction sent.</p>}
-          {executeStatus === 'error' && executeError && <p className="error-text">{executeError}</p>}
+      <div className="dao-meta-grid">
+        <div className="meta-card">
+          <p className="label">DAO owner</p>
+          <p className="monospace">{ownerAddress ?? 'pending'}</p>
         </div>
-      )}
-
-      <div className="proposal-meta">
-        <p>Quorum threshold: {quorumThreshold > 0n ? quorumThreshold.toString() : 'pending'}</p>
-        {voteDurationMs > 0 && <p>Vote duration: {(voteDurationMs / 1000 / 60).toFixed(0)} minutes</p>}
+        <div className="meta-card">
+          <p className="label">Quorum threshold</p>
+          <p className="value">{quorumThreshold > 0n ? quorumThreshold.toString() : 'pending'}</p>
+        </div>
+        <div className="meta-card">
+          <p className="label">Vote duration</p>
+          <p className="value">{voteDurationMs > 0 ? `${(voteDurationMs / 1000 / 60).toFixed(0)} min` : 'pending'}</p>
+        </div>
       </div>
     </section>
   )

@@ -111,66 +111,76 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="wallet-card">
-        <header>
-          <h1>Hoodi wallet connection</h1>
-        </header>
-
-        <div className="status-row">
-          <span className="status-label">Wallet status:</span>
-          <span className={`status-pill status-pill--${accountStatus}`}>{accountStatus}</span>
+      <header className="app-header">
+        <div>
+          <p className="eyebrow">Hoodi DAO</p>
+          <h1>Governance control center</h1>
+          <p className="subtitle">Monitor the treasury, proposals, and execute votes from a single console.</p>
         </div>
-
-        {!isConnected ? (
-          <button className="primary-btn" disabled={connectDisabled} onClick={handleConnect}>
-            {preferredConnector?.name ? `Connect ${preferredConnector.name}` : 'Connect Wallet'}
-          </button>
-        ) : (
-          <div className="connected-actions">
-            <button className="primary-btn secondary" onClick={handleDisconnect}>
-              Disconnect
-            </button>
-            {isWrongNetwork && (
-              <button className="primary-btn" onClick={handleSwitchNetwork} disabled={isSwitching}>
-                {isSwitching ? 'Switching...' : 'Switch to Hoodi'}
+        <div className="wallet-toolbar">
+          <div className="toolbar-status">
+            <span className={`status-pill status-pill--${accountStatus}`}>{accountStatus}</span>
+            <span className={`network-pill ${isWrongNetwork ? 'network-pill--warning' : ''}`}>{networkLabel}</span>
+          </div>
+          <div className="toolbar-actions">
+            {!isConnected ? (
+              <button className="primary-btn" disabled={connectDisabled} onClick={handleConnect}>
+                {preferredConnector?.name ? `Connect ${preferredConnector.name}` : 'Connect Wallet'}
               </button>
+            ) : (
+              <>
+                {isWrongNetwork && (
+                  <button className="primary-btn secondary" onClick={handleSwitchNetwork} disabled={isSwitching}>
+                    {isSwitching ? 'Switching…' : 'Switch to Hoodi'}
+                  </button>
+                )}
+                <button className="primary-btn" onClick={handleDisconnect}>
+                  Disconnect
+                </button>
+              </>
             )}
           </div>
-        )}
+        </div>
+      </header>
 
-        {(localError || connectError || switchError) && (
-          <p className="error-text">{localError ?? connectError?.message ?? switchError?.message}</p>
-        )}
-        {!preferredConnector && !isConnected && (
-          <p className="helper-text">No wallet extension detected. Install MetaMask to continue.</p>
-        )}
+      {(localError || connectError || switchError) && (
+        <p className="error-text banner">{localError ?? connectError?.message ?? switchError?.message}</p>
+      )}
+      {!preferredConnector && !isConnected && (
+        <p className="helper-text banner">No wallet extension detected. Install MetaMask to continue.</p>
+      )}
 
-        <DAPPLayout>
-          <TokenMetadataProvider>
-            <RouterProvider>
-              {isConnected && (
-                <>
-                  <div className="wallet-details">
-                  <div className="wallet-details__header">
-                    <AddressAvatar address={address} />
-                    <div>
-                      <p className="label">Address</p>
-                      {address ? (
-                        <a
-                          href={`${HOODI_SCAN}address/${address}`}
-                          className="address-link"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {shortenAddress(address)}
-                        </a>
-                      ) : (
-                        <span>-</span>
-                      )}
+      <DAPPLayout>
+        <TokenMetadataProvider>
+          <RouterProvider>
+            <div className="dashboard-grid">
+              <div className="primary-column">
+                <section className="panel wallet-overview">
+                  <div className="wallet-overview__header">
+                    <div className="wallet-identity">
+                      <AddressAvatar address={address ?? undefined} />
+                      <div>
+                        <p className="label">Active wallet</p>
+                        {address ? (
+                          <a
+                            href={`${HOODI_SCAN}address/${address}`}
+                            className="address-link"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {shortenAddress(address)}
+                          </a>
+                        ) : (
+                          <span>-</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="wallet-health">
+                      <p className="label">Status</p>
+                      <span className={`status-pill status-pill--${accountStatus}`}>{accountStatus}</span>
                     </div>
                   </div>
-
-                  <div className="wallet-grid">
+                  <div className="wallet-stats-grid">
                     <div>
                       <p className="label">Network</p>
                       <p className="value">{networkLabel}</p>
@@ -180,7 +190,7 @@ function App() {
                       <p className="value">{chainId ?? '-'}</p>
                     </div>
                     <div>
-                      <p className="label">Balance</p>
+                      <p className="label">Native balance</p>
                       <p className="value">
                         {isBalancePending
                           ? 'Loading…'
@@ -188,25 +198,34 @@ function App() {
                       </p>
                     </div>
                   </div>
-
                   {isWrongNetwork && (
                     <p className="warning-text">
                       Wrong network detected. Please switch to Hoodi (chainId {hoodiChainId}).
                     </p>
                   )}
-                </div>
+                </section>
 
                 <BalanceDisplay />
                 <div id="dao-governance">
                   <DaoGovernance />
                 </div>
-                </>
-              )}
-              <ProposalsSection />
-            </RouterProvider>
-          </TokenMetadataProvider>
-        </DAPPLayout>
-      </section>
+              </div>
+              <div className="secondary-column">
+                <section className="panel proposals-panel">
+                  <div className="panel-header">
+                    <div>
+                      <p className="eyebrow">Live proposals</p>
+                      <h3>Community governance</h3>
+                    </div>
+                    <p className="helper-text">Browse proposals synced from the on-chain DAO.</p>
+                  </div>
+                  <ProposalsSection />
+                </section>
+              </div>
+            </div>
+          </RouterProvider>
+        </TokenMetadataProvider>
+      </DAPPLayout>
     </main>
   )
 }
