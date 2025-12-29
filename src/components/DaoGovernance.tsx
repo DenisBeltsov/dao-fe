@@ -14,6 +14,7 @@ type ProposalRow = {
   forVotes: bigint
   againstVotes: bigint
   createdAt?: bigint
+  voteWindowEnd?: number
   voterStatuses: Record<string, 'for' | 'against'>
 }
 
@@ -39,6 +40,7 @@ const emptyProposal = (values?: Partial<ProposalRow>): ProposalRow => ({
   status: 'pending',
   forVotes: 0n,
   againstVotes: 0n,
+  voteWindowEnd: undefined,
   voterStatuses: {},
   ...values,
 })
@@ -54,10 +56,14 @@ const mapBackendProposal = (proposal: BackendProposal): ProposalRow => ({
   status: 'confirmed',
   forVotes: proposal.votesFor !== undefined ? BigInt(proposal.votesFor) : 0n,
   againstVotes: proposal.votesAgainst !== undefined ? BigInt(proposal.votesAgainst) : 0n,
+  voteWindowEnd: undefined,
   voterStatuses: {},
 })
 
-const mapOnchainStruct = (proposal: readonly [bigint, string, boolean, bigint, bigint, bigint]): ProposalRow => ({
+const mapOnchainStruct = (
+  proposal: readonly [bigint, string, boolean, bigint, bigint, bigint, bigint | undefined],
+  voteDurationMs: number,
+): ProposalRow => ({
   localId: proposal[0].toString(),
   onchainId: proposal[0],
   description: proposal[1],
@@ -66,6 +72,12 @@ const mapOnchainStruct = (proposal: readonly [bigint, string, boolean, bigint, b
   forVotes: proposal[3],
   againstVotes: proposal[4],
   createdAt: proposal[5],
+  voteWindowEnd:
+    voteDurationMs > 0
+      ? Number(proposal[5]) * 1000 + voteDurationMs
+      : proposal[6]
+        ? Number(proposal[6]) * 1000
+        : undefined,
   voterStatuses: {},
 })
 
@@ -97,6 +109,7 @@ export const DaoGovernance = () => {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [quorumThreshold, setQuorumThreshold] = useState<bigint>(0n)
   const [ownerAddress, setOwnerAddress] = useState<Address | null>(null)
+  const [voteDurationMs, setVoteDurationMs] = useState<number>(0)
 
   const sortedProposals = useMemo(() => {
     return [...proposals].sort((a, b) => {
@@ -198,13 +211,14 @@ const updateVotes = useCallback(
           bigint,
           bigint,
           bigint,
+          bigint,
         ]
-        upsertProposal(mapOnchainStruct(rawProposal))
+        upsertProposal(mapOnchainStruct(rawProposal, voteDurationMs))
       } catch (error) {
         console.error('Failed to refresh proposal from chain', error)
       }
     },
-    [daoReadContract, upsertProposal],
+    [daoReadContract, upsertProposal, voteDurationMs],
   )
 
   const syncOnchainProposals = useCallback(
@@ -229,10 +243,10 @@ const updateVotes = useCallback(
         }
         const mapped = payload.proposals.map(mapBackendProposal)
         setProposals(mapped)
-        const idsToSync = mapped
-          .map((proposal) => proposal.onchainId)
-          .filter((id): id is bigint => typeof id === 'bigint')
-        syncOnchainProposals(idsToSync)
+      const idsToSync = mapped
+        .map((proposal) => proposal.onchainId)
+        .filter((id): id is bigint => typeof id === 'bigint')
+      syncOnchainProposals(idsToSync)
       } catch (error) {
         if (cancelled) {
           return
@@ -260,15 +274,17 @@ const updateVotes = useCallback(
     let cancelled = false
     const loadMeta = async () => {
       try {
-        const [threshold, owner] = await Promise.all([
+        const [threshold, owner, duration] = await Promise.all([
           daoReadContract.read.quorumThreshold(),
           daoReadContract.read.owner(),
+          daoReadContract.read.voteDuration(),
         ])
         if (cancelled) {
           return
         }
         setQuorumThreshold(threshold as bigint)
         setOwnerAddress(owner as Address)
+        setVoteDurationMs(Number(duration) * 1000)
       } catch (error) {
         console.error('Failed to load DAO metadata', error)
       }
@@ -532,6 +548,9 @@ const updateVotes = useCallback(
 
           const totalVotes = proposal.forVotes + proposal.againstVotes
           const quorumReached = quorumThreshold > 0n ? totalVotes >= quorumThreshold : false
+          const voteWindowEndTimestamp = proposal.voteWindowEnd
+          const voteWindowEnded =
+            voteDurationMs === 0 || !voteWindowEndTimestamp || Date.now() >= voteWindowEndTimestamp
           const majorityFor = proposal.forVotes > proposal.againstVotes
           const isOwner = ownerAddress ? normalizeAddress(ownerAddress) === userAddressKey : false
           const executionStatus = proposal.onchainId
@@ -541,6 +560,7 @@ const updateVotes = useCallback(
             Boolean(proposal.onchainId) &&
             !proposal.executed &&
             quorumReached &&
+            voteWindowEnded &&
             majorityFor &&
             isOwner
           const executing = executionStatus?.status === 'pending'
@@ -567,8 +587,10 @@ const updateVotes = useCallback(
                 </p>
                 {proposal.createdAt && (
                   <p className="proposal-meta">
-                    Created:{' '}
-                    {new Date(Number(proposal.createdAt) * 1000).toLocaleString()}
+                    Voting closes:{' '}
+                    {new Date(
+                      proposal.voteWindowEnd ?? Number(proposal.createdAt) * 1000,
+                    ).toLocaleString()}
                   </p>
                 )}
                 {proposal.executed && <p className="success-text">Proposal executed.</p>}
@@ -600,16 +622,22 @@ const updateVotes = useCallback(
                 )}
               </div>
 
-              {canExecute && (
+              {Boolean(proposal.onchainId) && !proposal.executed && (
                 <div className="execute-box">
                   <button
                     type="button"
                     className="primary-btn"
-                    disabled={executing}
+                    disabled={!canExecute || executing}
                     onClick={() => handleExecute(proposal)}
                   >
                     {executing ? 'Executing...' : 'Execute proposal'}
                   </button>
+                  {!voteWindowEnded && voteDurationMs > 0 && (
+                    <p className="helper-text">Voting window still active.</p>
+                  )}
+                  {!quorumReached && <p className="helper-text">Waiting for quorum.</p>}
+                  {!majorityFor && quorumReached && <p className="helper-text">Proposal needs majority support.</p>}
+                  {!isOwner && <p className="helper-text">Only DAO owner can execute.</p>}
                   {executionStatus?.status === 'error' && executionStatus.error && (
                     <p className="error-text">{executionStatus.error}</p>
                   )}
