@@ -10,6 +10,7 @@ import './App.css'
 import { HOODI_SCAN, hoodi, hoodiChainId } from './config/customNetworks'
 import BalanceDisplay from './components/BalanceDisplay'
 import DAPPLayout from './components/DAPPLayout'
+import DaoGovernance from './components/DaoGovernance'
 
 const shortenAddress = (address?: string | null) => {
   if (!address) {
@@ -192,6 +193,7 @@ function App() {
               </div>
 
               <BalanceDisplay />
+              <DaoGovernance />
             </>
           )}
         </DAPPLayout>

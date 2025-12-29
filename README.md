@@ -9,7 +9,9 @@ Simple Vite + React client for the DAO lab tasks. It connects to the Hoodi test 
    - `VITE_PROJECT_ID` – Reown project id.
    - `VITE_ALCHEMY_KEY` – Hoodi RPC key.
    - `VITE_API_URL` – backend URL for auth (e.g. `http://localhost:3000`).
+   - `VITE_DAO_ADDRESS` – DAO contract address on Hoodi.
    - optional `VITE_CUSTOM_TOKEN_ADDRESS`.
+   - optional `VITE_VOTE_DURATION_SECONDS` – seconds before execution buttons appear (0 = immediate).
 3. Run `npm run dev` for local development.
 
 ## Available Scripts
