@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { type Address } from 'viem'
-import { useAccount, useWatchContractEvent, useWriteContract } from 'wagmi'
+import { type Address, getContract } from 'viem'
+import { useAccount, usePublicClient, useWatchContractEvent, useWriteContract } from 'wagmi'
 import { daoAbi, daoAddress } from '../config/daoConfig'
 import { fetchAllProposals, type BackendProposal } from '../services/proposalsService'
 
@@ -11,8 +11,10 @@ type ProposalRow = {
   creator?: Address
   executed?: boolean
   status: 'pending' | 'confirmed'
-  forVotes: number
-  againstVotes: number
+  forVotes: bigint
+  againstVotes: bigint
+  createdAt?: bigint
+  voteWindowEnd?: number
   voterStatuses: Record<string, 'for' | 'against'>
 }
 
@@ -36,8 +38,9 @@ const emptyProposal = (values?: Partial<ProposalRow>): ProposalRow => ({
   localId: createLocalId(),
   description: '',
   status: 'pending',
-  forVotes: 0,
-  againstVotes: 0,
+  forVotes: 0n,
+  againstVotes: 0n,
+  voteWindowEnd: undefined,
   voterStatuses: {},
   ...values,
 })
@@ -51,13 +54,48 @@ const mapBackendProposal = (proposal: BackendProposal): ProposalRow => ({
   creator: (proposal.creator || undefined) as Address | undefined,
   executed: proposal.executed,
   status: 'confirmed',
-  forVotes: proposal.votesFor ?? 0,
-  againstVotes: proposal.votesAgainst ?? 0,
+  forVotes: proposal.votesFor !== undefined ? BigInt(proposal.votesFor) : 0n,
+  againstVotes: proposal.votesAgainst !== undefined ? BigInt(proposal.votesAgainst) : 0n,
+  voteWindowEnd: undefined,
   voterStatuses: {},
 })
 
+const mapOnchainStruct = (
+  proposal: readonly [bigint, string, boolean, bigint, bigint, bigint, bigint | undefined],
+  voteDurationMs: number,
+): ProposalRow => ({
+  localId: proposal[0].toString(),
+  onchainId: proposal[0],
+  description: proposal[1],
+  executed: proposal[2],
+  status: 'confirmed',
+  forVotes: proposal[3],
+  againstVotes: proposal[4],
+  createdAt: proposal[5],
+  voteWindowEnd:
+    voteDurationMs > 0
+      ? Number(proposal[5]) * 1000 + voteDurationMs
+      : proposal[6]
+        ? Number(proposal[6]) * 1000
+        : undefined,
+  voterStatuses: {},
+})
+
+const formatVotes = (value: bigint) => value.toString()
+
 export const DaoGovernance = () => {
   const { address, isConnected } = useAccount()
+  const publicClient = usePublicClient()
+  const daoReadContract = useMemo(() => {
+    if (!publicClient) {
+      return null
+    }
+    return getContract({
+      address: daoAddress,
+      abi: daoAbi,
+      client: { public: publicClient },
+    })
+  }, [publicClient])
   const { writeContractAsync, isPending: isWritePending } = useWriteContract()
 
   const [proposals, setProposals] = useState<ProposalRow[]>([])
@@ -66,8 +104,12 @@ export const DaoGovernance = () => {
   const [createStatus, setCreateStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
   const [createError, setCreateError] = useState<string | null>(null)
   const [voteStatuses, setVoteStatuses] = useState<Record<string, { status: VoteStatus; error?: string }>>({})
+  const [executionStatuses, setExecutionStatuses] = useState<Record<string, { status: VoteStatus; error?: string }>>({})
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [quorumThreshold, setQuorumThreshold] = useState<bigint>(0n)
+  const [ownerAddress, setOwnerAddress] = useState<Address | null>(null)
+  const [voteDurationMs, setVoteDurationMs] = useState<number>(0)
 
   const sortedProposals = useMemo(() => {
     return [...proposals].sort((a, b) => {
@@ -127,8 +169,8 @@ export const DaoGovernance = () => {
     })
   }, [])
 
-  const updateVotes = useCallback(
-    (proposalId: bigint, voter: Address, support: boolean) => {
+const updateVotes = useCallback(
+  (proposalId: bigint, voter: Address, support: boolean, weight: bigint) => {
       const voteKey = proposalId.toString()
 
       setProposals((prev) =>
@@ -143,8 +185,8 @@ export const DaoGovernance = () => {
           }
           return {
             ...proposal,
-            forVotes: support ? proposal.forVotes + 1 : proposal.forVotes,
-            againstVotes: support ? proposal.againstVotes : proposal.againstVotes + 1,
+            forVotes: support ? proposal.forVotes + weight : proposal.forVotes,
+            againstVotes: support ? proposal.againstVotes : proposal.againstVotes + weight,
             voterStatuses: {
               ...proposal.voterStatuses,
               [voterKey]: support ? 'for' : 'against',
@@ -152,13 +194,41 @@ export const DaoGovernance = () => {
           }
         }),
       )
-
-      setVoteStatuses((prev) => ({
-        ...prev,
-        [voteKey]: { status: 'success' },
-      }))
     },
     [],
+  )
+
+  const refreshProposalFromChain = useCallback(
+    async (proposalId: bigint) => {
+      if (!daoReadContract) {
+        return
+      }
+      try {
+        const rawProposal = (await daoReadContract.read.getProposal([proposalId])) as readonly [
+          bigint,
+          string,
+          boolean,
+          bigint,
+          bigint,
+          bigint,
+          bigint,
+        ]
+        upsertProposal(mapOnchainStruct(rawProposal, voteDurationMs))
+      } catch (error) {
+        console.error('Failed to refresh proposal from chain', error)
+      }
+    },
+    [daoReadContract, upsertProposal, voteDurationMs],
+  )
+
+  const syncOnchainProposals = useCallback(
+    async (proposalIds: bigint[]) => {
+      if (!daoReadContract || proposalIds.length === 0) {
+        return
+      }
+      await Promise.all(proposalIds.map((id) => refreshProposalFromChain(id)))
+    },
+    [daoReadContract, refreshProposalFromChain],
   )
 
   useEffect(() => {
@@ -173,6 +243,10 @@ export const DaoGovernance = () => {
         }
         const mapped = payload.proposals.map(mapBackendProposal)
         setProposals(mapped)
+      const idsToSync = mapped
+        .map((proposal) => proposal.onchainId)
+        .filter((id): id is bigint => typeof id === 'bigint')
+      syncOnchainProposals(idsToSync)
       } catch (error) {
         if (cancelled) {
           return
@@ -191,7 +265,35 @@ export const DaoGovernance = () => {
     return () => {
       cancelled = true
     }
-  }, [refreshNonce])
+  }, [refreshNonce, syncOnchainProposals])
+
+  useEffect(() => {
+    if (!daoReadContract) {
+      return
+    }
+    let cancelled = false
+    const loadMeta = async () => {
+      try {
+        const [threshold, owner, duration] = await Promise.all([
+          daoReadContract.read.quorumThreshold(),
+          daoReadContract.read.owner(),
+          daoReadContract.read.voteDuration(),
+        ])
+        if (cancelled) {
+          return
+        }
+        setQuorumThreshold(threshold as bigint)
+        setOwnerAddress(owner as Address)
+        setVoteDurationMs(Number(duration) * 1000)
+      } catch (error) {
+        console.error('Failed to load DAO metadata', error)
+      }
+    }
+    loadMeta()
+    return () => {
+      cancelled = true
+    }
+  }, [daoReadContract])
 
   useWatchContractEvent({
     address: daoAddress,
@@ -215,6 +317,7 @@ export const DaoGovernance = () => {
             status: 'confirmed',
           }),
         )
+        refreshProposalFromChain(id)
       })
     },
   })
@@ -229,10 +332,32 @@ export const DaoGovernance = () => {
         const id = args?.id as bigint | undefined
         const voter = args?.voter as Address | undefined
         const support = Boolean(args?.support)
+        const weight = (args?.weight as bigint | undefined) ?? 0n
         if (!id || !voter) {
           return
         }
-        updateVotes(id, voter, support)
+        updateVotes(id, voter, support, weight)
+        refreshProposalFromChain(id)
+      })
+    },
+  })
+
+  useWatchContractEvent({
+    address: daoAddress,
+    abi: daoAbi,
+    eventName: 'ProposalExecuted',
+    onLogs: (logs) => {
+      logs.forEach((log) => {
+        const args = (log as { args?: Record<string, unknown> }).args
+        const id = args?.id as bigint | undefined
+        if (!id) {
+          return
+        }
+        refreshProposalFromChain(id)
+        setExecutionStatuses((prev) => ({
+          ...prev,
+          [id.toString()]: { status: 'success' },
+        }))
       })
     },
   })
@@ -301,8 +426,56 @@ export const DaoGovernance = () => {
         functionName: 'vote',
         args: [proposal.onchainId, support],
       })
+      setVoteStatuses((prev) => ({
+        ...prev,
+        [idKey]: { status: 'success' },
+      }))
     } catch (error) {
       setVoteStatuses((prev) => ({
+        ...prev,
+        [idKey]: { status: 'error', error: getErrorMessage(error) },
+      }))
+    }
+  }
+
+  const handleExecute = async (proposal: ProposalRow) => {
+    if (!proposal.onchainId) {
+      return
+    }
+    if (!isConnected || !address) {
+      setExecutionStatuses((prev) => ({
+        ...prev,
+        [proposal.onchainId!.toString()]: { status: 'error', error: 'Connect wallet to execute.' },
+      }))
+      return
+    }
+    const idKey = proposal.onchainId.toString()
+    setExecutionStatuses((prev) => ({
+      ...prev,
+      [idKey]: { status: 'pending' },
+    }))
+    try {
+      await writeContractAsync({
+        account: address,
+        address: daoAddress,
+        abi: daoAbi,
+        functionName: 'executeProposal',
+        args: [proposal.onchainId],
+      })
+      setExecutionStatuses((prev) => ({
+        ...prev,
+        [idKey]: { status: 'success' },
+      }))
+      setProposals((prev) =>
+        prev.map((current) =>
+          current.onchainId?.toString() === idKey
+            ? { ...current, executed: true }
+            : current,
+        ),
+      )
+      refreshProposalFromChain(proposal.onchainId)
+    } catch (error) {
+      setExecutionStatuses((prev) => ({
         ...prev,
         [idKey]: { status: 'error', error: getErrorMessage(error) },
       }))
@@ -370,7 +543,27 @@ export const DaoGovernance = () => {
             !proposal.onchainId ||
             proposal.status === 'pending' ||
             Boolean(userVoteState) ||
-            proposalVoteStatus?.status === 'pending'
+            proposalVoteStatus?.status === 'pending' ||
+            proposal.executed
+
+          const totalVotes = proposal.forVotes + proposal.againstVotes
+          const quorumReached = quorumThreshold > 0n ? totalVotes >= quorumThreshold : false
+          const voteWindowEndTimestamp = proposal.voteWindowEnd
+          const voteWindowEnded =
+            voteDurationMs === 0 || !voteWindowEndTimestamp || Date.now() >= voteWindowEndTimestamp
+          const majorityFor = proposal.forVotes > proposal.againstVotes
+          const isOwner = ownerAddress ? normalizeAddress(ownerAddress) === userAddressKey : false
+          const executionStatus = proposal.onchainId
+            ? executionStatuses[proposal.onchainId.toString()]
+            : undefined
+          const canExecute =
+            Boolean(proposal.onchainId) &&
+            !proposal.executed &&
+            quorumReached &&
+            voteWindowEnded &&
+            majorityFor &&
+            isOwner
+          const executing = executionStatus?.status === 'pending'
 
           return (
             <article key={proposal.localId} className="proposal-item">
@@ -385,9 +578,22 @@ export const DaoGovernance = () => {
                 </p>
                 <p className="proposal-meta">
                   Votes:&nbsp;
-                  <span className="for-votes">{proposal.forVotes} For</span>&nbsp;/&nbsp;
-                  <span className="against-votes">{proposal.againstVotes} Against</span>
+                  <span className="for-votes">{formatVotes(proposal.forVotes)} For</span>&nbsp;/&nbsp;
+                  <span className="against-votes">{formatVotes(proposal.againstVotes)} Against</span>
                 </p>
+                <p className="proposal-meta">
+                  Total:&nbsp;
+                  {formatVotes(totalVotes)} / {quorumThreshold > 0n ? formatVotes(quorumThreshold) : 'N/A'} needed
+                </p>
+                {proposal.createdAt && (
+                  <p className="proposal-meta">
+                    Voting closes:{' '}
+                    {new Date(
+                      proposal.voteWindowEnd ?? Number(proposal.createdAt) * 1000,
+                    ).toLocaleString()}
+                  </p>
+                )}
+                {proposal.executed && <p className="success-text">Proposal executed.</p>}
                 {userVoteState && <p className="success-text">You voted {userVoteState === 'for' ? 'For' : 'Against'}.</p>}
               </div>
 
@@ -415,6 +621,29 @@ export const DaoGovernance = () => {
                   <p className="error-text">{proposalVoteStatus.error}</p>
                 )}
               </div>
+
+              {Boolean(proposal.onchainId) && !proposal.executed && (
+                <div className="execute-box">
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    disabled={!canExecute || executing}
+                    onClick={() => handleExecute(proposal)}
+                  >
+                    {executing ? 'Executing...' : 'Execute proposal'}
+                  </button>
+                  {!voteWindowEnded && voteDurationMs > 0 && (
+                    <p className="helper-text">Voting window still active.</p>
+                  )}
+                  {!quorumReached && <p className="helper-text">Waiting for quorum.</p>}
+                  {!majorityFor && quorumReached && <p className="helper-text">Proposal needs majority support.</p>}
+                  {!isOwner && <p className="helper-text">Only DAO owner can execute.</p>}
+                  {executionStatus?.status === 'error' && executionStatus.error && (
+                    <p className="error-text">{executionStatus.error}</p>
+                  )}
+                  {executionStatus?.status === 'success' && <p className="success-text">Execution confirmed.</p>}
+                </div>
+              )}
             </article>
           )
         })}
