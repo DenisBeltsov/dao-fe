@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
+import axios from 'axios'
+import { useQueryClient } from '@tanstack/react-query'
 import { getContract, type Address } from 'viem'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { daoAbi, daoAddress } from '../config/daoConfig'
 import { erc20Abi } from '../config/erc20Abi'
 import { useTokenMetadata } from '../context/tokenMetadata'
 import { setTokenDecimals } from '../utils/tokenFormat'
+import { fetchProposalById, type BackendProposal, type ProposalsResponse } from '../services/proposalsService'
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) {
@@ -13,9 +16,36 @@ const getErrorMessage = (error: unknown) => {
   return 'Something went wrong'
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const pollProposalFromBackend = async (
+  proposalId: number,
+  timeoutMs = 10_000,
+  intervalMs = 1_000,
+): Promise<BackendProposal | null> => {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    try {
+      const proposal = await fetchProposalById(proposalId)
+      if (proposal) {
+        return proposal
+      }
+    } catch (error) {
+      if (!axios.isAxiosError(error) || error.response?.status !== 404) {
+        console.warn('Failed to fetch newly created proposal from backend', error)
+      }
+    }
+    await sleep(intervalMs)
+  }
+
+  return null
+}
+
 export const DaoGovernance = () => {
   const { address, isConnected } = useAccount()
   const publicClient = usePublicClient()
+  const queryClient = useQueryClient()
   const daoReadContract = useMemo(() => {
     if (!publicClient) {
       return null
@@ -35,6 +65,26 @@ export const DaoGovernance = () => {
   const [quorumThreshold, setQuorumThreshold] = useState<bigint>(0n)
   const [ownerAddress, setOwnerAddress] = useState<Address | null>(null)
   const [isOwnerLoading, setIsOwnerLoading] = useState(true)
+
+  const upsertProposalCaches = (proposal: BackendProposal) => {
+    queryClient.setQueryData(['proposal', proposal.id], proposal)
+    queryClient.setQueryData(['proposals', 'list'], (existing: ProposalsResponse | undefined) => {
+      if (!existing) {
+        return {
+          total: 1,
+          proposals: [proposal],
+        }
+      }
+      const already = existing.proposals.some((item) => item.id === proposal.id)
+      const proposals = already
+        ? existing.proposals.map((item) => (item.id === proposal.id ? proposal : item))
+        : [proposal, ...existing.proposals]
+      return {
+        total: already ? existing.total : existing.total + 1,
+        proposals,
+      }
+    })
+  }
 
   useEffect(() => {
     if (!daoReadContract) {
@@ -102,18 +152,45 @@ export const DaoGovernance = () => {
       setCreateError('Only the DAO owner can create proposals')
       return
     }
+    if (!publicClient) {
+      setCreateError('RPC client unavailable. Try again later.')
+      return
+    }
     setCreateStatus('pending')
     setCreateError(null)
     try {
-      await writeContractAsync({
+      const trimmedDescription = description.trim()
+      const simulation = await publicClient.simulateContract({
         account: address,
         address: daoAddress,
         abi: daoAbi,
         functionName: 'createProposal',
-        args: [description.trim()],
+        args: [trimmedDescription],
       })
+      const txHash = await writeContractAsync(simulation.request)
+      await publicClient.waitForTransactionReceipt({ hash: txHash })
+      const createdId = Number(simulation.result)
       setDescription('')
       setCreateStatus('success')
+      const optimisticProposal: BackendProposal = {
+        id: createdId,
+        description: trimmedDescription,
+        executed: false,
+        finalized: false,
+        creator: address,
+        createdAt: Date.now(),
+      }
+      upsertProposalCaches(optimisticProposal)
+
+      const syncedProposal = await pollProposalFromBackend(createdId)
+      if (syncedProposal) {
+        upsertProposalCaches(syncedProposal)
+      } else {
+        console.warn(`Proposal #${createdId} was not available from backend after waiting 10 seconds.`)
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['proposal', createdId] })
+      await queryClient.invalidateQueries({ queryKey: ['proposals', 'list'] })
     } catch (error) {
       setCreateStatus('error')
       setCreateError(getErrorMessage(error))

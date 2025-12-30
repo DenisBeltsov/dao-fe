@@ -1,7 +1,8 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
-import { useAccount, useSignMessage } from 'wagmi'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { useAccount, useAccountEffect, useSignMessage } from 'wagmi'
 import axios from 'axios'
 import { fetchNonce, verifySignature } from '../services/authService'
+import { clearAuthToken, setAuthToken } from '../lib/authToken'
 
 type AuthStatus = 'idle' | 'requestingNonce' | 'awaitingSignature' | 'verifying' | 'authenticated' | 'error'
 
@@ -33,19 +34,44 @@ type Props = {
 }
 
 export const DAPPLayout = ({ children }: Props) => {
-  const { address, chainId, isConnected } = useAccount()
+  const { address, chainId, isConnected, status: accountStatus } = useAccount()
   const { signMessageAsync } = useSignMessage()
 
   const [status, setStatus] = useState<AuthStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
+  const previousAddressRef = useRef<string | null>(null)
+
+  useAccountEffect({
+    onConnect(data) {
+      previousAddressRef.current = data.address ?? null
+    },
+    onChange(data) {
+      const nextAddress = data.address ?? null
+      const previousAddress = previousAddressRef.current
+
+      if (previousAddress && nextAddress && previousAddress !== nextAddress) {
+        // Wallet account switched; expire the current auth session immediately.
+        setError(null)
+        setIsAuthenticated(false)
+        setStatus('idle')
+        clearAuthToken()
+      }
+
+      previousAddressRef.current = nextAddress
+    },
+    onDisconnect() {
+      previousAddressRef.current = null
+    },
+  })
 
   useEffect(() => {
     if (!isConnected || !address) {
       setError(null)
       setIsAuthenticated(false)
       setStatus('idle')
+      clearAuthToken()
       return
     }
 
@@ -55,6 +81,7 @@ export const DAPPLayout = ({ children }: Props) => {
       setError(null)
       setIsAuthenticated(false)
       setStatus('requestingNonce')
+      clearAuthToken()
 
       try {
         const { data } = await fetchNonce(address)
@@ -73,7 +100,7 @@ export const DAPPLayout = ({ children }: Props) => {
           return
         }
         setStatus('verifying')
-        await verifySignature({
+        const { data: verifyResponse } = await verifySignature({
           address,
           signature,
           chainId,
@@ -81,6 +108,10 @@ export const DAPPLayout = ({ children }: Props) => {
         if (cancelled) {
           return
         }
+        if (!verifyResponse?.token) {
+          throw new Error('Token was not provided by backend.')
+        }
+        setAuthToken(verifyResponse.token)
         setIsAuthenticated(true)
         setStatus('authenticated')
       } catch (authError) {
@@ -90,6 +121,7 @@ export const DAPPLayout = ({ children }: Props) => {
         setIsAuthenticated(false)
         setStatus('error')
         setError(getErrorMessage(authError))
+        clearAuthToken()
       }
     }
 
@@ -99,6 +131,16 @@ export const DAPPLayout = ({ children }: Props) => {
       cancelled = true
     }
   }, [address, chainId, isConnected, signMessageAsync, retryCount])
+
+  // When MetaMask switches accounts, wagmi updates `address`/`isConnected` and the effect above re-runs.
+  // We can also respond to the status itself for immediate UX feedback.
+  useEffect(() => {
+    if (accountStatus === 'disconnected') {
+      setIsAuthenticated(false)
+      setStatus('idle')
+      clearAuthToken()
+    }
+  }, [accountStatus])
 
   const message = useMemo(() => {
     if (!isConnected) {

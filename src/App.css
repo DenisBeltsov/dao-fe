@@ -454,6 +454,11 @@ h1 {
   color: #047857;
 }
 
+.status-chip--defeated {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .vote-results {
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 14px;
@@ -479,8 +484,15 @@ h1 {
   align-items: center;
 }
 
-.vote-chart canvas {
-  max-width: 240px;
+.vote-chart__canvas {
+  width: 220px;
+  height: 220px;
+  max-width: 100%;
+}
+
+.vote-chart__canvas canvas {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .dapp-layout {

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import axios from 'axios'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Chart as ChartJS, ArcElement, DoughnutController, Legend, Tooltip } from 'chart.js'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import type { Address } from 'viem'
 import { daoAbi, daoAddress } from '../../config/daoConfig'
 import { hoodiChainId } from '../../config/customNetworks'
-import { fetchProposalById, fetchProposalResults } from '../../services/proposalsService'
+import { fetchProposalById, type BackendProposal, type ProposalsResponse } from '../../services/proposalsService'
 import { useRouter } from '../../hooks/useRouter'
 import { formatTokenAmount } from '../../utils/tokenFormat'
 import { useTokenMetadata } from '../../context/tokenMetadata'
@@ -23,6 +24,50 @@ const getErrorMessage = (error: unknown) => {
   return 'Something went wrong'
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const pollProposalFromBackend = async (
+  proposalId: number,
+  timeoutMs = 10_000,
+  intervalMs = 1_000,
+): Promise<BackendProposal | null> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const proposal = await fetchProposalById(proposalId)
+      if (proposal) {
+        return proposal
+      }
+    } catch (error) {
+      if (!axios.isAxiosError(error) || error.response?.status !== 404) {
+        console.warn('Failed to fetch updated proposal from backend', error)
+      }
+    }
+    await sleep(intervalMs)
+  }
+  return null
+}
+
+const toBigInt = (value?: string | number | null) => {
+  if (typeof value === 'string') {
+    if (!value.trim()) {
+      return 0n
+    }
+    try {
+      return BigInt(value)
+    } catch {
+      return 0n
+    }
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      return 0n
+    }
+    return BigInt(Math.trunc(value))
+  }
+  return 0n
+}
+
 export const ProposalDetails = ({ proposalId }: Props) => {
   const numericId = Number(proposalId)
   const { navigate } = useRouter()
@@ -31,6 +76,7 @@ export const ProposalDetails = ({ proposalId }: Props) => {
   const publicClient = usePublicClient()
   const { writeContractAsync, isPending: isVotePending } = useWriteContract()
   const queryClient = useQueryClient()
+
   const [voteStatus, setVoteStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
   const [voteError, setVoteError] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState<boolean | null>(null)
@@ -41,6 +87,10 @@ export const ProposalDetails = ({ proposalId }: Props) => {
   const [isCheckingExecution, setIsCheckingExecution] = useState(false)
   const [executeStatus, setExecuteStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
   const [executeError, setExecuteError] = useState<string | null>(null)
+  const [finalizeStatus, setFinalizeStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
+  const [finalizeError, setFinalizeError] = useState<string | null>(null)
+  const [isExecutionConfirmed, setIsExecutionConfirmed] = useState(false)
+
   const chartRef = useRef<HTMLCanvasElement | null>(null)
   const chartInstanceRef = useRef<ChartJS<'doughnut'> | null>(null)
 
@@ -54,39 +104,68 @@ export const ProposalDetails = ({ proposalId }: Props) => {
     enabled: Number.isFinite(numericId),
   })
 
-  const {
-    data: results,
-    isLoading: resultsLoading,
-    error: resultsError,
-  } = useQuery({
-    queryKey: ['proposal-results', numericId],
-    queryFn: () => fetchProposalResults(numericId),
-    enabled: Number.isFinite(numericId) && Boolean(proposal?.executed),
-  })
-
-  const votingOpen = proposal ? !proposal.executed : false
+  const votesFor = toBigInt(proposal?.votesFor)
+  const votesAgainst = toBigInt(proposal?.votesAgainst)
   const voteWindowEnd =
     proposal?.createdAt && voteDurationMs > 0
       ? Number(proposal.createdAt) + voteDurationMs
       : null
-  const hasVoteTotals =
-    proposal?.votesFor !== undefined && proposal?.votesAgainst !== undefined
-  const quorumSum =
-    hasVoteTotals && proposal
-      ? BigInt(proposal.votesFor ?? 0) + BigInt(proposal.votesAgainst ?? 0)
-      : null
   const voteWindowClosed = voteWindowEnd ? Date.now() > voteWindowEnd : false
-  const votingActive = votingOpen && !voteWindowClosed
+  const supportsExecution = votesFor > votesAgainst
+  const defeated = Boolean(proposal?.finalized && !proposal?.executed && !supportsExecution)
+  const votingActive = proposal ? !proposal.executed && !proposal.finalized : false
   const isWrongNetwork = Boolean(isConnected && chainId && chainId !== hoodiChainId)
   const isOwnerWallet = daoOwner && address ? daoOwner.toLowerCase() === address.toLowerCase() : false
+  const showExecuteAction = voteWindowClosed && !proposal?.executed && supportsExecution
+  const showFinalizeAction = voteWindowClosed && !proposal?.executed && !proposal?.finalized && !supportsExecution
+  const ownerChecksInProgress = isOwnerLoading
+
+  const statusLabel = proposal?.executed
+    ? 'Executed'
+    : defeated
+      ? 'Defeated'
+      : proposal?.finalized
+        ? 'Finalized'
+        : 'Pending'
+  const statusClass = proposal?.executed
+    ? 'status-chip--confirmed'
+    : defeated
+      ? 'status-chip--defeated'
+      : 'status-chip--pending'
+
   const voteChartData = useMemo(() => {
     if (proposal?.votesFor === undefined || proposal?.votesAgainst === undefined) {
       return null
     }
-    const forVotes = Number(proposal.votesFor ?? 0)
-    const againstVotes = Number(proposal.votesAgainst ?? 0)
-    return [Number.isFinite(forVotes) ? forVotes : 0, Number.isFinite(againstVotes) ? againstVotes : 0]
+    const forVotesNumber = Number(proposal.votesFor ?? 0)
+    const againstVotesNumber = Number(proposal.votesAgainst ?? 0)
+    const sanitizedFor = Number.isFinite(forVotesNumber) ? forVotesNumber : 0
+    const sanitizedAgainst = Number.isFinite(againstVotesNumber) ? againstVotesNumber : 0
+    if (sanitizedFor <= 0 && sanitizedAgainst <= 0) {
+      return null
+    }
+    return [sanitizedFor, sanitizedAgainst]
   }, [proposal?.votesFor, proposal?.votesAgainst])
+
+  const upsertProposalCaches = (updated: BackendProposal) => {
+    queryClient.setQueryData(['proposal', numericId], updated)
+    queryClient.setQueryData(['proposals', 'list'], (existing: ProposalsResponse | undefined) => {
+      if (!existing) {
+        return {
+          total: 1,
+          proposals: [updated],
+        }
+      }
+      const already = existing.proposals.some((item) => item.id === updated.id)
+      const proposals = already
+        ? existing.proposals.map((item) => (item.id === updated.id ? updated : item))
+        : [updated, ...existing.proposals]
+      return {
+        total: already ? existing.total : existing.total + 1,
+        proposals,
+      }
+    })
+  }
 
   useEffect(() => {
     if (!publicClient) {
@@ -120,7 +199,7 @@ export const ProposalDetails = ({ proposalId }: Props) => {
   }, [publicClient])
 
   useEffect(() => {
-    if (!publicClient || !Number.isFinite(numericId) || !voteWindowClosed || proposal?.executed) {
+    if (!publicClient || !Number.isFinite(numericId) || !showExecuteAction) {
       setCanExecute(null)
       setIsCheckingExecution(false)
       return
@@ -153,7 +232,7 @@ export const ProposalDetails = ({ proposalId }: Props) => {
     return () => {
       cancelled = true
     }
-  }, [publicClient, numericId, voteWindowClosed, proposal?.executed])
+  }, [publicClient, numericId, showExecuteAction])
 
   useEffect(() => {
     if (!publicClient || !isConnected || !address || !Number.isFinite(numericId)) {
@@ -216,6 +295,8 @@ export const ProposalDetails = ({ proposalId }: Props) => {
         ],
       },
       options: {
+        responsive: true,
+        maintainAspectRatio: false,
         plugins: {
           legend: {
             position: 'bottom',
@@ -241,8 +322,8 @@ export const ProposalDetails = ({ proposalId }: Props) => {
   } else if (!votingActive) {
     voteDisabledReason = proposal?.executed
       ? 'This proposal has already been executed.'
-      : voteWindowClosed
-        ? 'The voting window has closed.'
+      : proposal?.finalized
+        ? 'This proposal has been finalized.'
         : null
   }
 
@@ -262,7 +343,7 @@ export const ProposalDetails = ({ proposalId }: Props) => {
     }
     if (!votingActive) {
       setVoteStatus('error')
-      setVoteError(voteWindowClosed ? 'Voting period has ended' : 'Proposal already executed')
+      setVoteError(proposal.finalized ? 'Proposal finalized' : 'Proposal already executed')
       return
     }
     if (hasVoted) {
@@ -273,15 +354,28 @@ export const ProposalDetails = ({ proposalId }: Props) => {
     setVoteStatus('pending')
     setVoteError(null)
     try {
-      await writeContractAsync({
+      const txHash = await writeContractAsync({
         account: address,
         address: daoAddress,
         abi: daoAbi,
         functionName: 'vote',
         args: [BigInt(numericId), support],
       })
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash: txHash })
+      }
       setVoteStatus('success')
       setHasVoted(true)
+      const syncedProposal = await pollProposalFromBackend(numericId)
+      if (syncedProposal) {
+        upsertProposalCaches(syncedProposal)
+      } else {
+        console.warn(`Proposal #${numericId} data was not updated within 10 seconds after voting.`)
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['proposal', numericId] }),
+        queryClient.invalidateQueries({ queryKey: ['proposals', 'list'] }),
+      ])
     } catch (error) {
       setVoteStatus('error')
       setVoteError(getErrorMessage(error))
@@ -312,27 +406,95 @@ export const ProposalDetails = ({ proposalId }: Props) => {
       setExecuteError('Voting window is still open')
       return
     }
-    if (!canExecute) {
+    if (!supportsExecution) {
       setExecuteStatus('error')
       setExecuteError('Execution requirements not met')
+      return
+    }
+    if (canExecute === false) {
+      setExecuteStatus('error')
+      setExecuteError('Quorum requirements not met')
       return
     }
     setExecuteStatus('pending')
     setExecuteError(null)
     try {
-      await writeContractAsync({
+      const txHash = await writeContractAsync({
         account: address,
         address: daoAddress,
         abi: daoAbi,
         functionName: 'executeProposal',
         args: [BigInt(numericId)],
       })
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash: txHash })
+      }
       setExecuteStatus('success')
-      await queryClient.invalidateQueries({ queryKey: ['proposal', numericId] })
-      await queryClient.invalidateQueries({ queryKey: ['proposal-results', numericId] })
+      setIsExecutionConfirmed(true)
+      const syncedProposal = await pollProposalFromBackend(numericId)
+      if (syncedProposal) {
+        upsertProposalCaches(syncedProposal)
+      } else {
+        console.warn(`Proposal #${numericId} execution not confirmed by backend within 10 seconds.`)
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['proposal', numericId] }),
+        queryClient.invalidateQueries({ queryKey: ['proposals', 'list'] }),
+      ])
     } catch (error) {
       setExecuteStatus('error')
       setExecuteError(getErrorMessage(error))
+      setIsExecutionConfirmed(false)
+    }
+  }
+
+  const handleFinalize = async () => {
+    if (!proposal) {
+      return
+    }
+    if (!isConnected || !address) {
+      setFinalizeStatus('error')
+      setFinalizeError('Connect your wallet to finalize proposals')
+      return
+    }
+    if (isWrongNetwork) {
+      setFinalizeStatus('error')
+      setFinalizeError('Switch to the Hoodi network to finalize')
+      return
+    }
+    if (!isOwnerWallet) {
+      setFinalizeStatus('error')
+      setFinalizeError('Only the DAO owner can finalize proposals')
+      return
+    }
+    if (!voteWindowClosed) {
+      setFinalizeStatus('error')
+      setFinalizeError('Voting window is still open')
+      return
+    }
+    if (proposal?.finalized) {
+      setFinalizeStatus('error')
+      setFinalizeError('Proposal already finalized')
+      return
+    }
+    setFinalizeStatus('pending')
+    setFinalizeError(null)
+    try {
+      await writeContractAsync({
+        account: address,
+        address: daoAddress,
+        abi: daoAbi,
+        functionName: 'finalizeProposal',
+        args: [BigInt(numericId)],
+      })
+      setFinalizeStatus('success')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['proposal', numericId] }),
+        queryClient.invalidateQueries({ queryKey: ['proposals', 'list'] }),
+      ])
+    } catch (error) {
+      setFinalizeStatus('error')
+      setFinalizeError(getErrorMessage(error))
     }
   }
 
@@ -384,13 +546,16 @@ export const ProposalDetails = ({ proposalId }: Props) => {
       <p className="proposal-description">{proposal.description}</p>
       <p className="proposal-meta">
         Status:{' '}
-        <span className={`status-chip status-chip--${proposal.executed ? 'confirmed' : 'pending'}`}>
-          {proposal.executed ? 'Executed' : 'Pending'}
-        </span>
+        <span className={`status-chip ${statusClass}`}>{statusLabel}</span>
       </p>
       {proposal.creator && (
         <p className="proposal-meta">
           Creator: <span className="monospace">{proposal.creator}</span>
+        </p>
+      )}
+      {proposal.executor && (
+        <p className="proposal-meta">
+          Executor: <span className="monospace">{proposal.executor}</span>
         </p>
       )}
 
@@ -403,43 +568,30 @@ export const ProposalDetails = ({ proposalId }: Props) => {
         <p className="helper-text">Voting window information is unavailable.</p>
       )}
 
-      {quorumSum !== null && (
-        <p className="proposal-meta">
-          Total votes counted on-chain: {formatTokenAmount(quorumSum, decimals)}
-        </p>
-      )}
+      <div className="vote-results">
+        <h4>Vote totals</h4>
+        <div className="vote-results__grid">
+          <div>
+            <p className="label">Votes For</p>
+            <p className="value">{formatTokenAmount(votesFor, decimals)}</p>
+          </div>
+          <div>
+            <p className="label">Votes Against</p>
+            <p className="value">{formatTokenAmount(votesAgainst, decimals)}</p>
+          </div>
+        </div>
+      </div>
+
       {voteChartData && (
         <div className="vote-chart">
           <h4>Vote distribution</h4>
-          <canvas ref={chartRef} aria-label="Votes chart" />
+          <div className="vote-chart__canvas">
+            <canvas ref={chartRef} aria-label="Votes chart" />
+          </div>
         </div>
       )}
 
-      {proposal.executed && (
-        <div className="vote-results">
-          <h4>Final voting results</h4>
-          {resultsLoading && <p className="helper-text">Loading results...</p>}
-          {resultsError && (
-            <p className="error-text">
-              Failed to load results. {resultsError instanceof Error ? resultsError.message : ''}
-            </p>
-          )}
-          {results && (
-            <div className="vote-results__grid">
-              <div>
-                <p className="label">Votes For</p>
-              <p className="value">{formatTokenAmount(results.votesFor, decimals)}</p>
-              </div>
-              <div>
-                <p className="label">Votes Against</p>
-              <p className="value">{formatTokenAmount(results.votesAgainst, decimals)}</p>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {votingOpen ? (
+      {votingActive ? (
         <div className="proposal-actions vote-dialog">
           <h4>Vote on-chain</h4>
           <p className="helper-text">Cast your vote for this proposal without leaving the detail view.</p>
@@ -447,7 +599,7 @@ export const ProposalDetails = ({ proposalId }: Props) => {
             <button
               type="button"
               className="primary-btn secondary"
-              disabled={!votingActive || !isConnected || isWrongNetwork || isVotePending || isCheckingVote || Boolean(hasVoted)}
+              disabled={!isConnected || isWrongNetwork || isVotePending || isCheckingVote || Boolean(hasVoted)}
               onClick={() => handleVote(true)}
             >
               Vote For
@@ -455,7 +607,7 @@ export const ProposalDetails = ({ proposalId }: Props) => {
             <button
               type="button"
               className="primary-btn secondary"
-              disabled={!votingActive || !isConnected || isWrongNetwork || isVotePending || isCheckingVote || Boolean(hasVoted)}
+              disabled={!isConnected || isWrongNetwork || isVotePending || isCheckingVote || Boolean(hasVoted)}
               onClick={() => handleVote(false)}
             >
               Vote Against
@@ -471,38 +623,55 @@ export const ProposalDetails = ({ proposalId }: Props) => {
         <p className="success-text">Voting completed for this proposal.</p>
       )}
 
-      {!proposal.executed && voteWindowClosed && (
+      {voteWindowClosed && !proposal.executed && (
         <div className="proposal-actions execution-dialog">
-          <h4>Execute proposal</h4>
-          <p className="helper-text">
-            Voting closed on {voteWindowEnd ? new Date(voteWindowEnd).toLocaleString() : 'the scheduled deadline'}.
-          </p>
-          {isOwnerLoading && <p className="helper-text">Checking DAO ownership permissions...</p>}
-          {isCheckingExecution && <p className="helper-text">Validating quorum and eligibility...</p>}
-          {!isCheckingExecution && canExecute === false && (
-            <p className="warning-text">Quorum requirements were not met. This proposal cannot be executed.</p>
+          <h4>Post-vote actions</h4>
+          {showFinalizeAction && (
+            isOwnerWallet ? (
+              <button
+                type="button"
+                className="primary-btn secondary"
+                disabled={ownerChecksInProgress || finalizeStatus === 'pending'}
+                onClick={handleFinalize}
+              >
+                {finalizeStatus === 'pending' ? 'Finalizing...' : 'Finalize proposal'}
+              </button>
+            ) : (
+              <p className="helper-text">Only the DAO owner can finalize proposals.</p>
+            )
           )}
-          {canExecute && (
+          {showExecuteAction && (
             isOwnerWallet ? (
               <button
                 type="button"
                 className="primary-btn"
-                disabled={executeStatus === 'pending' || isWrongNetwork}
+                disabled={
+                  ownerChecksInProgress ||
+                  executeStatus === 'pending' ||
+                  isCheckingExecution ||
+                  canExecute === false ||
+                  proposal.executed ||
+                  isExecutionConfirmed
+                }
                 onClick={handleExecute}
               >
                 {executeStatus === 'pending' ? 'Executing...' : 'Execute proposal'}
               </button>
             ) : (
-              <p className="helper-text">
-                Only the DAO owner {daoOwner ? <span className="monospace">{daoOwner}</span> : ''} can execute proposals.
-              </p>
+              <p className="helper-text">Only the DAO owner can execute proposals.</p>
             )
           )}
-          {!canExecute && !isCheckingExecution && (
-            <p className="helper-text">Execution becomes available once quorum is met.</p>
+          {ownerChecksInProgress && <p className="helper-text">Verifying owner permissions...</p>}
+          {!showFinalizeAction && defeated && <p className="warning-text">Proposal finalized on-chain as defeated.</p>}
+          {!showExecuteAction && supportsExecution && proposal.finalized && !proposal.executed && (
+            <p className="helper-text">Proposal finalized, but execution remains available for a passing vote.</p>
           )}
+          {isCheckingExecution && <p className="helper-text">Validating quorum and eligibility...</p>}
+          {finalizeStatus === 'success' && <p className="success-text">Proposal finalized.</p>}
+          {finalizeStatus === 'error' && finalizeError && <p className="error-text">{finalizeError}</p>}
           {executeStatus === 'success' && <p className="success-text">Execution transaction sent.</p>}
           {executeStatus === 'error' && executeError && <p className="error-text">{executeError}</p>}
+          {canExecute === false && <p className="warning-text">Quorum requirements were not met.</p>}
         </div>
       )}
     </div>

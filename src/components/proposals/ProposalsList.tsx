@@ -1,9 +1,17 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchAllProposals } from '../../services/proposalsService'
+import { fetchAllProposals, type BackendProposal } from '../../services/proposalsService'
 import { useRouter } from '../../hooks/useRouter'
 
-const statusLabel = (executed: boolean) => (executed ? 'Executed' : 'Pending')
+const statusLabel = (proposal: BackendProposal) => {
+  if (proposal.executed) {
+    return 'Executed'
+  }
+  if (proposal.finalized) {
+    return 'Defeated'
+  }
+  return 'Pending'
+}
 
 export const ProposalsList = () => {
   const { navigate } = useRouter()
@@ -35,8 +43,12 @@ export const ProposalsList = () => {
             <p className="proposal-description">{proposal.description}</p>
             <p className="proposal-meta">
               Status:{' '}
-              <span className={`status-chip status-chip--${proposal.executed ? 'confirmed' : 'pending'}`}>
-                {statusLabel(proposal.executed)}
+              <span
+                className={`status-chip ${
+                  proposal.executed ? 'status-chip--confirmed' : proposal.finalized ? 'status-chip--defeated' : 'status-chip--pending'
+                }`}
+              >
+                {statusLabel(proposal)}
               </span>
             </p>
           </div>

@@ -16,5 +16,10 @@ export type VerifySignaturePayload = {
   chainId?: number
 }
 
+export type VerifySignatureResponse = {
+  success: boolean
+  token: string
+}
+
 export const verifySignature = (payload: VerifySignaturePayload) =>
-  apiClient.post('/auth/verify', payload)
+  apiClient.post<VerifySignatureResponse>('/auth/verify', payload)
