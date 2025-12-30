@@ -6,7 +6,7 @@ import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { daoAbi, daoAddress } from '../config/daoConfig'
 import { erc20Abi } from '../config/erc20Abi'
 import { useTokenMetadata } from '../context/tokenMetadata'
-import { setTokenDecimals } from '../utils/tokenFormat'
+import { formatTokenAmount, setTokenDecimals } from '../utils/tokenFormat'
 import { fetchProposalById, type BackendProposal, type ProposalsResponse } from '../services/proposalsService'
 
 const getErrorMessage = (error: unknown) => {
@@ -57,7 +57,7 @@ export const DaoGovernance = () => {
     })
   }, [publicClient])
   const { writeContractAsync, isPending: isWritePending } = useWriteContract()
-  const { setDecimals, voteDurationMs, setVoteDurationMs } = useTokenMetadata()
+  const { decimals, setDecimals, voteDurationMs, setVoteDurationMs } = useTokenMetadata()
 
   const [description, setDescription] = useState('')
   const [createStatus, setCreateStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
@@ -262,7 +262,9 @@ export const DaoGovernance = () => {
         </div>
         <div className="meta-card">
           <p className="label">Quorum threshold</p>
-          <p className="value">{quorumThreshold > 0n ? quorumThreshold.toString() : 'pending'}</p>
+          <p className="value">
+            {quorumThreshold > 0n ? formatTokenAmount(quorumThreshold, decimals) : 'pending'}
+          </p>
         </div>
         <div className="meta-card">
           <p className="label">Vote duration</p>

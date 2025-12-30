@@ -301,6 +301,25 @@ export const ProposalDetails = ({ proposalId }: Props) => {
           legend: {
             position: 'bottom',
           },
+          tooltip: {
+            callbacks: {
+              label: (context) => {
+                const label = context.label ? `${context.label}: ` : ''
+                const rawValue = typeof context.raw === 'number' ? context.raw : Number(context.raw ?? 0)
+                const safeValue = Number.isFinite(rawValue) ? rawValue : 0
+                const formattedValue = formatTokenAmount(BigInt(Math.trunc(safeValue)), decimals)
+                const dataset = context.dataset?.data ?? []
+                const total = Array.isArray(dataset)
+                  ? dataset.reduce((acc, value) => {
+                      const numericValue = typeof value === 'number' ? value : Number(value ?? 0)
+                      return Number.isFinite(numericValue) ? acc + numericValue : acc
+                    }, 0)
+                  : 0
+                const percent = total > 0 ? ` (${((safeValue / total) * 100).toFixed(1)}%)` : ''
+                return `${label}${formattedValue} tokens${percent}`
+              },
+            },
+          },
         },
       },
     })
@@ -308,7 +327,7 @@ export const ProposalDetails = ({ proposalId }: Props) => {
       chartInstanceRef.current?.destroy()
       chartInstanceRef.current = null
     }
-  }, [voteChartData])
+  }, [voteChartData, decimals])
 
   let voteDisabledReason: string | null = null
   if (!isConnected) {
