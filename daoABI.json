@@ -76,6 +76,19 @@
     },
     {
       "type": "function",
+      "name": "finalizeProposal",
+      "inputs": [
+        {
+          "name": "_id",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "getProposal",
       "inputs": [
         {
@@ -102,6 +115,11 @@
             },
             {
               "name": "executed",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "finalized",
               "type": "bool",
               "internalType": "bool"
             },
@@ -230,6 +248,11 @@
         },
         {
           "name": "executed",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "finalized",
           "type": "bool",
           "internalType": "bool"
         },
@@ -371,6 +394,25 @@
         },
         {
           "name": "executor",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProposalFinalized",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "finalizer",
           "type": "address",
           "indexed": true,
           "internalType": "address"

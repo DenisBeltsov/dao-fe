@@ -9,10 +9,12 @@ if (!projectId) {
   throw new Error('VITE_PROJECT_ID is not defined')
 }
 
+const defaultMetadataUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173'
+
 export const metadata = {
   name: 'DAO FE Lab',
   description: 'Minimal Hoodi wallet connector',
-  url: 'https://dao.fe.local',
+  url: defaultMetadataUrl,
   icons: ['https://avatars.githubusercontent.com/u/179229932'],
 }
 
